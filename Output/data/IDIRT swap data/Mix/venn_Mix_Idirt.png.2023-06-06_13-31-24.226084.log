@@ -1,0 +1,12 @@
+INFO [2023-06-06 13:31:24] $x
+INFO [2023-06-06 13:31:24] list(idirt_number, mix_number)
+INFO [2023-06-06 13:31:24] 
+INFO [2023-06-06 13:31:24] $category.names
+INFO [2023-06-06 13:31:24] c("IDIRT", "MIX")
+INFO [2023-06-06 13:31:24] 
+INFO [2023-06-06 13:31:24] $filename
+INFO [2023-06-06 13:31:24] [1] "./Output/Mix/venn_Mix_Idirt.png"
+INFO [2023-06-06 13:31:24] 
+INFO [2023-06-06 13:31:24] $output
+INFO [2023-06-06 13:31:24] [1] TRUE
+INFO [2023-06-06 13:31:24] 

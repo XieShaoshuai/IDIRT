@@ -10,17 +10,19 @@ library(VennDiagram)
 library(ggrepel)
 library(BayesFactor)
 library(matrixStats)
+library(ggrepel)
 
 
 set.seed(123456)
 #parameter setting
-mix_protein_path <- "./data/Mix data/Mix_90min_Proteins.txt"
-idirt_protein_path <- "./data/IDIRT data/IDIRT_Proteins.txt"
+mix_protein_path <- "./data/Mix data/Mix_all_Proteins.txt"
+idirt_protein_path <- "./data/IDIRT data/IDIRTall_Proteins.txt"
 
 col_select <- "./data/Mix data/metadata.csv"
-col_select_idirt <- "./data/IDIRT data/IDIRT_metadata.csv"
+col_select_idirt <- "./data/IDIRT data/IDIRT_metadata swap.csv"
 
 buffer <- c(2,3,16,19,25,29)
+experiment <- c(1,2)  # 1: IDIRT Heavy for BG1 CDH1-HA, #2 IDIRT swap, Heavy for BG1 wt
 
 #-----------------------------------------------
 #MIX data analysis
@@ -28,58 +30,82 @@ buffer <- c(2,3,16,19,25,29)
 
 #load source
 source("./scr/Mix/1_load_data.R")
-source("./scr/Mix/5_check_overlap.R")
 source("./scr/Mix/6_get_cutoff.R")
+source("./scr/idirt/1_load_idirt.R")
+source("./scr/idirt/bayesian_global.R")
+source("./scr/idirt/stochiometry.R")
+source("./scr/idirt/get_interactors.R")
+
 
 #load MIX proteome protein and peptide data
-mix <- load_mix(mix_protein_path,col_select)
+mix1 <- load_mix(mix_protein_path,col_select,1)
+mix2 <- load_mix(mix_protein_path,col_select,2)
 
-#check the overlap between Mix and IDIRT data
-check_ovelap(mix,idirt_protein_path)
 
 #establish cut-off, method1: just use the distribution of mix protein ratio as a cutoff
-ratio <- mix %>% dplyr::filter(protein_median_ratio > 0 & protein_median_ratio<1)
-ratio <- ratio$protein_median_ratio
-#stimulate peak distribtion
-x_binned <- mixR::bin(ratio, brks = seq(0, 1, length = 20))
-mod <- mixR::mixfit(x_binned, ncomp = 1,init.method = "kmeans")
-cutoff <- mod[["mu"]] + 2*mod[["sd"]]
-cutoff_list <- list("cutoff"=cutoff,"sd"=mod[["sd"]], mu = mod[["mu"]])
-cutoff_list
-plot(mod)
-
+cutoff_1 <- get_cutoff(mix1,1)
+cutoff_2 <- get_cutoff(mix2,2)
 
 
 #--------------------------------------------------------------
 #IDIRT data analysis
 #--------------------------------------------------------------
-source("./scr/idirt/1_load_idirt.R")
-source("./scr/idirt/bayesian.R")
-source("./scr/idirt/bayesian_global.R")
+#get interactors in each condition
+con2 <- get_interactor(2)
+con3 <- get_interactor(3)
+con16 <- get_interactor(16)
+con19 <- get_interactor(19)
+con25 <- get_interactor(25) 
+con29 <- get_interactor(29)
 
-#detach("package:mixR", unload = TRUE)
 
-#library(dplyr)
-data <- as.data.frame(as.matrix("NA",1,0))
-colnames(data) <- "Accession"
-for(k in buffer){
-  #load IDIRT data
-  data1  <- load_idirt(idirt_protein_path, col_select_idirt, k, mix)
-  
-  data3 <- bayesian2(data1,mix,cutoff_list,k)
-  
-  data3_temp <- data3 %>% select(Accession,bf)
-  data1 <- left_join(data1,data3_temp,by="Accession")
-  write.table(data1,file=paste0("Buffer ",k,".csv"),sep=",")
-  
-  data_temp <- data3 %>% select(Accession,Description,bf,median_ratio)
-  colnames(data_temp) <- c("Accession",paste0("Buffer",k,"_Bayes Factor"),paste0("Buffer",k,"_Idirt ratio"))
-  
-  data <- full_join(data_temp,data, by="Accession")
-  
-}
+#combine all interactors
+list2 <- con2 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list3 <- con3 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list16 <- con16 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list19 <- con19 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list25 <- con25 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list29 <- con29 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+interactors <- unique(c(list2$Accession,list3$Accession,list16$Accession,list19$Accession,list25$Accession,list29$Accession))
 
-dd <- mix %>% select(Accession,Description,protein_median_ratio)
+write.table(interactors,"interactors.txt",row.names = FALSE)
 
-data <- left_join(data,dd,by="Accession")
-write.table(data,"all_data.csv",sep=",")
+
+list2 <- con2 %>% filter(group=="Stable interactor") %>% 
+  select(Gene,group)
+list3 <- con3 %>% filter(group=="Stable interactor") %>% 
+  select(Gene,group)
+list16 <- con16 %>% filter(group=="Stable interactor") %>% 
+  select(Gene,group)
+list19 <- con19 %>% filter(group=="Stable interactor") %>% 
+  select(Gene,group)
+list25 <- con25 %>% filter(group=="Stable interactor") %>% 
+  select(Gene,group)
+list29 <- con29 %>% filter(group=="Stable interactor") %>% 
+  select(Gene,group)
+interactors <- unique(c(list2$Gene,list3$Gene,list16$Gene,list19$Gene,list25$Gene,list29$Gene))
+
+write.table(interactors,"stable interactors.txt",row.names = FALSE)
+
+list2 <- con2 %>% filter(group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list3 <- con3 %>% filter(group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list16 <- con16 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list19 <- con19 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list25 <- con25 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+list29 <- con29 %>% filter(group=="Stable interactor"|group=="Unstable interactor"|group=="Bait") %>% 
+  select(Accession,Gene,group)
+interactors <- unique(c(list2$Gene,list3$Gene,list16$Gene,list19$Gene,list25$Gene,list29$Gene))
+
+write.table(interactors,"interactors2.txt",row.names = FALSE)
+

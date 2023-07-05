@@ -1,0 +1,48 @@
+```{r reprex-options, include = FALSE}
+options(
+  keep.source = TRUE,
+  rlang_backtrace_on_error_report = "full",
+  crayon.enabled = FALSE,
+  reprex.current_venue = "gh"
+)
+```
+
+```{r, results = 'asis', echo = FALSE, include = file.exists('.Rprofile'), eval = file.exists('.Rprofile')}
+cat(sprintf("*Local `.Rprofile` detected at `%s`*", normalizePath(".Rprofile")))
+```
+
+---
+output:
+  reprex::reprex_document:
+    venue: "gh"
+    advertise: FALSE
+    session_info: TRUE
+    style: TRUE
+    comment: "#;-)"
+    tidyverse_quiet: FALSE
+    std_out_err: TRUE
+knit: reprex::reprex_render
+---
+
+This template demonstrates many of the bells and whistles of the `reprex::reprex_document()` output format. The YAML sets many options to non-default values, such as using `#;-)` as the comment in front of output.
+
+## Code style
+
+Since `style` is `TRUE`, this difficult-to-read code (look at the `.Rmd` source file) will be restyled according to the Tidyverse style guide when it's rendered. Whitespace rationing is not in effect!
+
+```{r}
+x <- 1
+```
+
+
+<details style="margin-bottom:10px;">
+<summary>Standard output and standard error</summary>
+`C:/Users/Eriba/OneDrive/UMCG/E-Cadherin Project/IDIRT/Untitled-2_reprex_std_out_err.txt`
+</details>
+
+<details style="margin-bottom:10px;">
+<summary>Session info</summary>
+```{r }
+sessioninfo::session_info()
+```
+</details>
