@@ -1,0 +1,4 @@
+#Compare the abundance in protein level and peptide level
+
+#load data
+pro <- read.delim("/data/IDIRT data/IDIRTall_Proteins.txt")
