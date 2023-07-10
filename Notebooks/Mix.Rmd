@@ -1,0 +1,211 @@
+---
+title: "I-DIRT Data Analysis: Proteomics (MIX) Preparation"
+output: html_document
+---
+
+## Set-up
+
+```{r}
+# Object preparation From Proteomics Only
+Proteomics_MIX <- list(
+  "Path_Proteomics_file" = "../data/Mix data/Mix_all_Proteins.txt",
+  "Metadata_Proteomics_file" = "../data/Metadata/Proteomics_Mix.csv" 
+)
+
+# Libraries
+library(tidyverse)
+```
+
+## CHANGES!!
+
+* The metadata for the proteomics data was changed in the format to make groups.
+
+## Data Preparation
+
+1. Read the proteomics file. It contains 92 columns
+2. Read Metadata for Proteomics Experiment. Useful to select the experiments of interest. **REFORMATING**
+
+```{r}
+prote_mix <- read.delim(Proteomics_MIX[["Path_Proteomics_file"]], stringsAsFactors = FALSE,
+                        sep = "\t")
+
+proteo_meta <- read.csv(Proteomics_MIX[["Metadata_Proteomics_file"]], stringsAsFactors = FALSE)
+head(prote_mix)
+head(proteo_meta)
+```
+
+3. Filter. The criteria for filtering is:
+  * Master == "IsMasterProtein"
+  * Protein.FDR.Confidence.Combined == "High"
+  * Number.of.unique.Peptides > 1
+  * Contaminant == "False"
+  
+```{r}
+# Initial number of proteins
+dim(prote_mix)
+
+# Filter process
+prote_mix_clean <- prote_mix %>% 
+  filter(
+    Master == "IsMasterProtein", 
+    Protein.FDR.Confidence.Combined == "High",
+    Number.of.Unique.Peptides > 1,
+    Contaminant == "False"
+  )
+
+# Number of proteins after filter
+dim(prote_mix_clean)
+```
+
+4. Select columns and experiments of interest. Here the experiments were separated in a list. Each element will have a Control and Sample.
+
+```{r}
+# From Metadata select Experiment 1
+swap_select <- proteo_meta %>% filter(SWAP == "NO") 
+
+head(swap_select)
+Proteomics_Rep <- list()
+
+for (i in unique(swap_select$Experiment_Name)) {
+  # Select the COL for each experiment
+  col_select <- swap_select %>% 
+    filter(Experiment_Name == i)
+  
+  # Filter each group And add Control and Sample
+  temp <- prote_mix_clean %>%
+    select(Accession, all_of(col_select$Col_Name))
+  
+  colnames(temp) <- c("Accession", col_select$Condition)
+  
+  # Replace NA to Zeros
+  temp <- replace(temp, is.na(temp), 0)
+  temp$Experiment <- i
+  
+  Proteomics_Rep[[i]] <- temp
+}
+
+head(Proteomics_Rep[[1]])
+```
+
+**NA step omitted for the moment**
+
+5. Calculate Ratio Using Normalized Abundance.
+
+$$Ratio = \frac{Sample}{Control + Sample}$$
+
+$$Ratio = \frac{Heavy}{Light + Heavy}$$
+
+```{r}
+# Per replicate
+Proteomics_Ratio <- lapply(Proteomics_Rep, function(x) {
+  x$Ratio <- x$Sample/(x$Control + x$Sample)
+  
+  return(x)
+})
+
+# Gather the data in one table
+#names(Proteomics_Ratio) <- unique(swap_select$Experiment_Name)
+Proteomics_Ratio_All <- do.call(rbind, Proteomics_Ratio)
+head(Proteomics_Ratio_All)
+```
+
+```{r}
+table(is.na(Proteomics_Ratio_All$Ratio))
+```
+
+6. Remove NA Values and get the Stats
+
+```{r}
+Mix_Summary <- Proteomics_Ratio_All %>% 
+  na.omit(Ratio) %>% 
+  group_by(Accession) %>% 
+  summarise(
+    Rep = n(),
+    Ratio_Mean = mean(Ratio),
+    Ratio_SD = sd(Ratio),
+    Median = median(Ratio)
+  )
+head(Mix_Summary)
+```
+
+## Quality plots
+
+Plots to show:
+
+
+* Distribution of intensities: See the distribution or scatter plot between sample and Control
+
+```{r}
+temp <- Proteomics_Ratio_All %>% 
+  mutate(Log_Control = log2(Control),
+         Log_Sample = log2(Sample))
+
+## Plot Correlation Control vs Sample
+ggplot(temp, aes(x = Log_Control, y = Log_Sample, color = Experiment)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(.~Experiment) +
+  theme_bw()
+```
+
+```{r}
+temp <- temp %>% 
+  select(Accession, Experiment, Log_Control, Log_Sample) %>% 
+  pivot_longer(cols = c(Log_Control, Log_Sample), names_to = "Condition", values_to = "Log_Intensity")
+
+temp$Log_Intensity <-  replace(temp$Log_Intensity, is.infinite(temp$Log_Intensity), 0)
+
+# Plot Log Intensities between Control and Sample
+ggplot(temp, aes(x = Log_Intensity, color = Condition)) +
+  geom_density() +
+  geom_rug() +
+  facet_wrap(.~Experiment) +
+  theme_bw()
+```
+
+* Ratio Distribution.
+
+```{r}
+temp <- Proteomics_Ratio_All %>% 
+  na.omit(Ratio) %>% 
+  #rownames_to_column(var="Experiment") %>% 
+  select(Experiment, Accession, Ratio) #%>% 
+  #pivot_wider(id_cols = Accession, names_from = Experiment, values_from = Ratio)
+
+## Plot Ratio Distribution
+ggplot(temp, aes(x = Ratio, color = Experiment)) +
+  geom_density(show.legend = FALSE) +
+  geom_vline(data = temp %>% group_by(Experiment) %>% summarize(Median_Exp = median(Ratio)),
+             mapping =  aes(xintercept = Median_Exp), color = "darkred", 
+             linetype = "dashed", alpha = 0.5) +
+  geom_text(data = temp %>% group_by(Experiment) %>% summarize(Median_Exp = median(Ratio)),
+            mapping = aes(x = Median_Exp+0.1, y = 0.2, label = round(Median_Exp, 3)),
+            size = 3.5,
+            inherit.aes = FALSE) +
+  ## Add the number of proteins
+  facet_wrap(.~Experiment) +
+  theme_bw()
+```
+
+* Correlations between Ratios in samples
+
+```{r}
+temp <- Proteomics_Ratio_All %>% 
+  na.omit(Ratio) %>% 
+  #rownames_to_column(var="Experiment") %>% 
+  select(Experiment, Accession, Ratio) %>% 
+  pivot_wider(id_cols = Accession, names_from = Experiment, values_from = Ratio) %>% 
+  select(-Accession)
+head(temp)
+
+panel.points<-function(x,y) {points(x,y,cex=0.5, pch = 18, col = "grey60")}
+
+pairs(temp,
+      upper.panel = NULL,
+      lower.panel = panel.points,
+      font.labels = 1)
+```
+
+
+## SWAP?
+
+If the dataset contains also "SWAP" experiments, the analysis will be the same and the results will be exported.

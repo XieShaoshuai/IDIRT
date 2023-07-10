@@ -1,0 +1,100 @@
+---
+title: "I-DIRT Data Analysis: Proteomics (MIX) CUTOFF"
+output: html_document
+---
+## Set-up
+
+```{r}
+# Object preparation From Proteomics Only
+# Data to use:
+# Proteomics mix object: Contains the Ratio of each proteins in each experiment (replicate)
+head(Mix_Summary)
+# Libraries
+library(tidyverse)
+
+# To simulate 
+library(mixR)
+```
+
+
+## Get Cut-off
+
+The objective is Simulate peak distribution
+
+```{r}
+# check stats from Ratio (all replicates)
+summary(Mix_Summary$Median)
+nrow(Mix_Summary)
+## Remove all Zeros and get Ratios
+Ratios <-  Mix_Summary %>% 
+  filter(Median > 0) %>% 
+  pull(Median)
+length(Ratios)
+```
+
+To simulate peak distributions it was used `MixR`. The steps are:
+
+* Make Bins for the Ratio Median Distribution. 20 bins from 0 to 1
+* 
+
+```{r}
+# Make Bins
+x_binned <- mixR::bin(Ratios, brks = seq(0,1,length = 20))
+
+# Maximum Likelihood estimation.
+# the output are stats for a distribution that fit the Ratio values
+fit_val <- mixR::mixfit(x = x_binned,
+                        ncomp =1,
+                        init.method = "kmeans",
+                        family = "normal")
+
+# Add the values in a list
+Cutoff_methods <- list()
+Cutoff_methods[["MIXR"]] <- fit_val
+
+## Get stats simulating a normal distribution
+Cutoff_methods[["Stats_Ratios"]] <- list(
+  "mu" = mean(Ratios),
+  "sd" = sd(Ratios))
+
+Cutoff_methods
+```
+
+* Get the cutoff using the mu and sd with the formula
+
+$$ \mu + 2*sd$$
+
+```{r}
+cutoff_mixfit <- fit_val[["mu"]] + 2*fit_val[["sd"]]; cutoff_mixfit
+cutoff_standard <- Cutoff_methods[["Stats_Ratios"]][["mu"]] + 2*Cutoff_methods[["Stats_Ratios"]][["sd"]] ; cutoff_standard
+
+## Include in the list
+Cutoff_methods[["Cutoff_Mixfit"]] <- cutoff_mixfit
+Cutoff_methods[["Cutoff_standard"]] <- cutoff_standard
+```
+
+## Plot for Simulation
+
+```{r}
+##
+plot(Cutoff_methods$MIXR) +
+  geom_density(data = Mix_Summary, aes(x = Median, colour = "Original"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
