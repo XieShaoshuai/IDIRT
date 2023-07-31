@@ -1,0 +1,454 @@
+---
+title: "I-DIRT Data Analysis: iDIRT set"
+output: html_document
+---
+
+## Set-up
+
+```{r}
+# Object preparation From Proteomics Only
+iDIRT_set <- list(
+  "Path_iDIRT_file" = "../data/IDIRT data/IDIRTall_Proteins.txt",
+  "Metadata_iDIRT_file" = "../data/Metadata/iDIRT_metadata.csv" 
+)
+
+# Libraries
+library(tidyverse)
+```
+
+
+## Data Preparation
+
+1. Load iDIRT data
+2. Apply Filters
+
+  * Protein.FDR.Confidence.Combined == High
+  * Master == IsMasterProtein
+  * Number.of.Unique.Peptides > 1
+
+```{r}
+## From Proteome Discover
+idirt_data <- read.delim(iDIRT_set[["Path_iDIRT_file"]],
+                         header = TRUE, stringsAsFactors = FALSE) %>% 
+  ## Cleaning data
+  filter(
+    Protein.FDR.Confidence.Combined == "High",
+    Master == "IsMasterProtein",
+    Number.of.Unique.Peptides > 1
+  )
+
+dim(idirt_data)
+```
+
+3) From Metadata (IDIRT Metadata) select the columns of interest. Working with NO SWAP data. Working with Buffer 02
+
+4) Filter to remove the rows with NA except in at least one replicates (including channel)
+
+5) Calculate ratio
+
+$$ Ratio = Sample_x / (Sample_x + Control_x) $$
+
+6) Calculate median of Ratios (replicates)
+
+7) Calculate Median Abundance Stoichiometry
+
+   Get the median Sample by protein
+   Get the median Control by protein
+   Get the median in Control
+   Select the protein of interest
+   Calculate Median in Sample (POI) / Number of Peptides 
+   Median Sample (Proteins)/Number of Peptides/ POI
+   
+
+```{r}
+# Load metadata
+idirt_metadata <- read.csv(iDIRT_set[["Metadata_iDIRT_file"]], 
+                           sep = ",", stringsAsFactors = FALSE)
+
+## Select NO SWAP and BUFFER 02
+Exp_sel <-  idirt_metadata %>% 
+  filter(SWAP == "NO") 
+
+## Separate by Buffer the iDIRT data
+idirt_Stats <- list()
+idirt_ratios <- list()
+for (i in unique(Exp_sel$Buffer)) {
+  #Select columns of interest
+  col_exp <- Exp_sel %>% 
+    filter(Buffer == i) %>% 
+    pull(Col_Name)
+  
+  # Select Proteins Metadata
+  idirt_prot_meta <- idirt_data %>% 
+    dplyr::select(Accession, Number.of.Peptides)
+  
+  # Select from IDIRT
+  df <- idirt_data %>% 
+    dplyr::select(Accession, all_of(col_exp))
+
+  ##--->Still working with each table
+  # Remove proteins with NA
+  # Replace Missing values with zero
+  temp <- df %>% 
+    filter(rowSums(is.na(df[,-1])) < ncol(df) -1) %>% 
+    replace(is.na(.), 0)
+  
+  ## Split Control and Sample to calculate ratio
+  ## CONTROL Group
+  control_col <- Exp_sel %>% 
+    filter(Buffer == i, Condition == "Control") %>% 
+    pull(Col_Name)
+  
+  control_df <- temp %>% dplyr::select(all_of(control_col))
+  
+  ## SAMPLE Group
+  sample_col <- Exp_sel %>% 
+    filter(Buffer == i, Condition != "Control") %>% 
+    pull(Col_Name)
+  
+  sample_df <- temp %>% dplyr::select(all_of(sample_col))
+  
+  ## Calculate ratio as a matrix
+  ratios_df <- sample_df/(control_df+sample_df)
+  
+  colnames(ratios_df) <- paste0("iDIRT_rep", c(1:ncol(ratios_df)))
+
+  ratios_df$Accession <- temp$Accession
+  
+  # Calculate median Ratios
+  idirt_summary <- ratios_df %>% 
+    pivot_longer(cols =-Accession, names_to = "iDirt", values_to = "Ratio") %>% 
+      group_by(Accession) %>% 
+      summarize(
+        IDIRT_mean = mean(Ratio, na.rm = TRUE),
+        IDIRT_sd = sd(Ratio, na.rm = TRUE),
+        IDIRT_median = median(Ratio, na.rm = TRUE),
+        IDIRT_Missing = sum(is.na(Ratio))
+            ) %>% 
+    mutate(Experiment = paste0("Buffer_",i))
+
+  
+  ## Summarize Abundances in Sample and Control
+  
+  Channels_summary <- temp %>% 
+    pivot_longer(cols = -Accession,
+                 names_to = "Experiment", values_to = "Values") %>% 
+    mutate(Channel = ifelse(grepl("light", Experiment, ignore.case = TRUE),
+                            "Light", "Heavy")) %>% 
+    group_by(Accession, Channel) %>% 
+    summarize(
+        Channel_mean = mean(Values, na.rm = TRUE),
+        Chanel_sd = sd(Values, na.rm = TRUE),
+        Channel_median = median(Values, na.rm = TRUE),
+        Channel_Missing = sum(is.na(Values))
+    ) %>% 
+    pivot_wider(id_cols = Accession, names_from = Channel, values_from = -c(Accession, Channel)) %>% 
+    mutate(Experiment = paste0("Buffer_", i)) %>% 
+    left_join(idirt_prot_meta, by = "Accession")
+  
+  ## Calculate Median Abundance Stoichiometry
+  #control_median <- median(Channels_summary$Channel_median_)
+  
+  # Protein of Interest
+  POI_Stoichiometry <- Channels_summary %>% 
+    filter(Accession == "P12830") %>% 
+    mutate(Stoichiometry = Channel_median_Heavy/Number.of.Peptides) %>% 
+    pull(Stoichiometry)
+  
+  Channels_summary$abundance_stoichiometry <-  Channels_summary$Channel_median_Heavy/Channels_summary$Number.of.Peptides/POI_Stoichiometry
+  
+  idirt_Stats[[paste0("Buffer_", i)]] <- Channels_summary %>% ungroup()
+  
+  
+  idirt_ratios[[paste0("Ratios_Buffer_", i)]] <- ratios_df %>% 
+    left_join(idirt_summary, by = "Accession") %>%
+    ungroup()
+  
+}
+```
+
+
+## Data Quality
+
+Compare Light and Heavy abundance change:
+
+* Correlation and Distribution
+
+```{r}
+# Gather all the data
+Idirt_stats_all <- do.call(rbind, idirt_Stats)
+head(Idirt_stats_all)
+Idirt_stats_all %>% 
+  filter(Accession == "A0A024QZ42")
+```
+
+```{r}
+# Scattter plot between experiments
+ggplot(Idirt_stats_all, aes(x = log2(Channel_median_Heavy +1),
+                            y = log2(Channel_median_Light+1),
+                            color = Experiment,
+                            size = abundance_stoichiometry)) +
+  geom_point(show.legend = FALSE, alpha = 0.6) +
+  facet_wrap(.~Experiment) +
+  theme_bw()
+```
+
+
+## Ratio Missing 
+
+```{r}
+# Gather all the ratio data
+IdirtRatios_stats_all <- do.call(rbind, idirt_ratios)
+head(IdirtRatios_stats_all)
+```
+
+
+```{r}
+counts_missing <- IdirtRatios_stats_all %>% 
+  count(Experiment, IDIRT_Missing)
+
+ggplot(counts_missing, aes(x = IDIRT_Missing, y = n, fill = Experiment)) +
+  geom_bar(show.legend = FALSE, stat = "identity") +
+  geom_text(aes(x = IDIRT_Missing, y = n + 20, label = n), size= 2) +
+  facet_wrap(.~Experiment) +
+  theme_bw()
+
+```
+
+7) Keep proteins that contain values in at least 2 replicates 
+
+```{r}
+IdirtRatios_filter <- IdirtRatios_stats_all %>% 
+  filter(IDIRT_Missing < 3)
+```
+
+## Get Stoichiometry
+
+
+## Comparison with Proteomics Mix
+
+* Shared proteins
+
+```{r}
+idirt_proteins_byBuffer <- lapply(idirt_ratios, function(x) unique(x$Accession))
+
+# Use upset
+library(UpSetR)
+
+comparisons_list <- lapply(names(idirt_proteins_byBuffer), function(x) {list("Proteomics", x)})
+## Add the Proteomics
+idirt_proteins_byBuffer$Proteomics <- unique(Proteomics_Ratio_All$Accession)
+
+upset(fromList(idirt_proteins_byBuffer), nsets = 7)
+```
+
+In euler
+
+```{r}
+library(eulerr)
+
+Euler_plots <- list()
+for (i in grep("Ratios",names(idirt_proteins_byBuffer), value = TRUE)) {
+  name_sample <- i
+  x <- list(
+    a =idirt_proteins_byBuffer[[i]],
+    b = idirt_proteins_byBuffer$Proteomics
+          )
+  
+  names(x) <- c(i, "Proteomics")
+
+  p <- plot(euler(x, shaple = "ellipse"), labels = list(cex=0.5),
+            quantities = list(cex = 0.5))
+  
+  Euler_plots[[i]] <- p
+
+}
+```
+
+
+```{r}
+Euler_plots$Ratios_Buffer_2
+```
+
+**Check Ratio in Mix**
+
+```{r}
+# Get the Ratio median for each protein
+Proteomics_summary <- Proteomics_Ratio_All %>% 
+  group_by(Accession) %>% 
+  summarise(
+    Ratio_mean = mean(Ratio, na.rm = TRUE),
+    Ratio_median = median(Ratio, na.rm = TRUE),
+    Ratio_sd = sd(Ratio, na.rm = TRUE),
+    Ratio_missing = sum(is.na(Ratio)),
+    # Control
+    Control_mean = mean(Control, na.rm = TRUE),
+    Control_median = median(Control, na.rm = TRUE),
+    Control_sd = sd(Control, na.rm = TRUE),
+    Control_missing = sum(is.na(Control)),
+    # Sample
+    Sample_mean = mean(Sample, na.rm = TRUE),
+    Sample_median = median(Sample, na.rm = TRUE),
+    Sample_sd = sd(Sample, na.rm = TRUE),
+    Sample_missing = sum(is.na(Sample)),
+  )
+ 
+
+## Add the proteomics Ratio to the iDIRT
+IDIRT_Mix <- IdirtRatios_filter %>% 
+  left_join(Proteomics_summary, by = "Accession")
+head(IDIRT_Mix)
+```
+
+Replace Missing values From `Mix` Data with -0.15. **Why this value?**.
+
+Add Classification:
+  * if IDIRT_ratio_median
+
+```{r}
+IDIRT_Mix <-IDIRT_Mix %>%
+  mutate(
+    Ratio_median = if_else(is.na(Ratio_median), -0.15, Ratio_median),
+    # Add groups
+    Group_iDIRT = if_else(IDIRT_median>0.71, "High", "Low")
+    )
+head(IDIRT_Mix)
+```
+
+## Quality Parallel
+ 
+```{r}
+# library(GGally)
+# 
+# ggparcoord(IDIRT_Mix, 
+#            col = c(8, 12),
+#            scale = "globalminmax",
+#            groupColumn = 24)
+```
+ 
+```{r}
+# Without GGally
+temp <- IDIRT_Mix %>% 
+  dplyr::select(Accession, Group_iDIRT, IDIRT_median, Ratio_median, Experiment) %>% 
+  pivot_longer(cols = -c(Accession, Group_iDIRT, Experiment), 
+               names_to = "Proteo_Interact",
+               values_to = "Ratio")
+
+head(temp)
+ggplot(temp) +
+  geom_line(aes(x = Proteo_Interact, y = Ratio, color = Group_iDIRT, group = Accession),
+            alpha = 0.3)+
+  geom_point(aes(x = Proteo_Interact, y = Ratio, color = Group_iDIRT),
+             alpha = 0.25) +
+  geom_hline(yintercept = 0.71, color = "blue", linetype = "dashed") +
+  facet_wrap(.~Experiment) +
+  theme_classic() +
+  theme(
+    legend.position = "none"
+  )
+```
+
+
+Ratio Distribution
+
+```{r}
+ggplot(temp) +
+  #geom_histogram(aes(x = Ratio, fill = Proteo_Interact),
+  #            alpha = 0.4, binwidth = 0.025) +
+  geom_density(aes(x = Ratio, fill = Proteo_Interact),
+                alpha = 0.4) +
+  facet_wrap(.~Experiment) +
+  theme_classic()
+```
+
+Alternative could be box plot
+
+
+```{r}
+ggplot(temp) +
+  geom_violin(aes(x = Ratio, y = Proteo_Interact, color = Proteo_Interact),
+               alpha = 0.4) +
+  geom_point(aes(x = Ratio, y = Proteo_Interact, color = Proteo_Interact),
+             size = 0.75,
+             alpha = 0.4, 
+             position = position_jitter(height = 0.2)) +
+  facet_wrap(.~Experiment) +
+  theme_classic()
+```
+
+Plot abundance and Ratio
+
+Use the data that contains the Abundance and Ratios. 
+From the Light Channel data, remove all the proteins that contains Zero.
+
+Get the quantile by Experiment
+
+```{r}
+temp_stats <- IdirtRatios_filter %>% 
+  left_join(Idirt_stats_all, by = c("Accession", "Experiment"))
+head(temp_stats)
+```
+
+
+```{r}
+# Remove the protiens with zero in Heavy?
+# Why not remove proteins with zero in Both Channels
+temp_stats %>% 
+  filter(Channel_median_Heavy > 0) %>% 
+  ggplot(aes(x = reorder(Accession, -Channel_median_Heavy), 
+             y = log2(Channel_median_Heavy+ 1))) +
+  geom_point(color = "69b3a2", alpha = 0.5) +
+  ## Plot the IDIRT significant
+  geom_point(data = temp_stats %>% filter(IDIRT_median >= 0.71),
+             aes(x = Accession, 
+                 y = log2(Channel_median_Heavy+ 1)),
+             color = "red") +
+  facet_wrap(.~Experiment)
+```
+
+The plot is rank ratio against the abundance in Proteomics
+
+```{r}
+temp_rank <- temp_stats %>% 
+  filter(Channel_median_Light > 0,
+         Channel_median_Heavy > 0) %>% 
+  group_by(Experiment) %>%
+  mutate(rank = rank(Channel_median_Heavy, ties.method = "first"))
+
+temp_quantiles <- temp_stats %>% 
+  group_by(Experiment) %>% 
+  summarize(Quantile_2 = log2(quantile(Channel_median_Light)[2]))
+
+temp_rank %>% 
+  ggplot(aes(x = rank, 
+             y = log2(Channel_median_Heavy+ 1))) +
+  geom_point(color = "#69b3a2", alpha = 0.5) +
+  ## Plot the IDIRT significant
+  geom_point(data = temp_rank %>% filter(IDIRT_median >= 0.71),
+            aes(x = rank, 
+                y = log2(Channel_median_Heavy+ 1)),
+             color = "darkred") +
+  # Show the protein of interest
+  ggrepel::geom_text_repel(data = temp_rank %>% filter(Accession == "P12830"),
+                  aes(label = Accession), size = 2.5)+
+  # Plot quantiles
+  geom_hline(data = temp_quantiles, 
+             aes(yintercept = Quantile_2),
+             linetype = "dashed", color = "red") +
+  labs(x = "Rank", y = "log2(Abundance heavy labeled proteins + 1)") +
+  facet_wrap(.~Experiment) +
+  theme_classic() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+```
+
+
+Return the data frame with the IDIRT Ratios and after filtering (proteins in at least 2 replicates).
+
+```{r}
+saveRDS(IdirtRatios_filter, file = "IDIRT_Loaded.Rds")
+```
+
