@@ -1,0 +1,223 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+```{r}
+warnings("off")
+```
+
+
+#check accession and experiment
+```{r}
+acc <- "P22223"
+experiment <- "IDIRT_buffer02"   #Swap_buff
+```
+
+
+#get ratio
+```{r}
+  protein <- data.frame(Accession=pro$Accession)  #get protein accession
+  df <- pep %>% select(Annotated.Sequence,Master.Protein.Accessions, contains(experiment))
+  #reomve 0 in all replicate
+  df <- df[rowSums(df[,3:10])>0,]
+  
+  
+  df_temp <- df %>% filter(grepl(acc,Master.Protein.Accessions))
+  if(nrow(df_temp)>1){  #check if protein is found at least 2 peptides in this buffer
+    df_temp <- df_temp %>% group_by(Annotated.Sequence,Master.Protein.Accessions) %>%  #group the same peptide
+        summarise(across(where(is.numeric),sum),.groups="drop")
+      
+    df_temp[,"a"] <- df_temp[, grep("Sample.a", names(df_temp))] /(df_temp[, grep("Sample.a", names(df_temp))]+df_temp[grep("Control.a", names(df_temp))])
+      
+    df_temp[,"b"] <- df_temp[, grep("Sample.b", names(df_temp))] /(df_temp[, grep("Sample.b", names(df_temp))]+df_temp[grep("Control.b", names(df_temp))])
+      
+    df_temp[,"c"] <- df_temp[, grep("Sample.c", names(df_temp))] /(df_temp[, grep("Sample.c", names(df_temp))]+df_temp[grep("Control.c", names(df_temp))])
+      
+    df_temp[,"d"] <- df_temp[, grep("Sample.d", names(df_temp))] /(df_temp[, grep("Sample.d", names(df_temp))]+df_temp[grep("Control.d", names(df_temp))])
+
+  }
+if(grepl("Swap",experiment)){
+  colnames(df_temp) <- c("Sequence","Accession", paste0(rep(c("sample.","control."),4),
+                                                      rep(c("a","b","c","d"),each=2)),
+                       "a","b","c","d")
+}else{
+  colnames(df_temp) <- c("Sequence","Accession", paste0(rep(c("control.","sample."),4),
+                                                      rep(c("a","b","c","d"),each=2)),
+                       "a","b","c","d")
+}
+
+                       
+  
+```
+
+#plot ratio distribution
+```{r}
+m <- log2(max(df_temp[, 3:10])+1)
+
+
+ggplot(df_temp)+
+  geom_density(aes(x=a),fill="red",alpha=0.5)+
+  geom_density(aes(x=b),fill="blue",alpha=0.5)+
+  geom_density(aes(x=c),fill="green",alpha=0.5)+
+  geom_density(aes(x=d),fill="orange",alpha=0.5)+
+  theme_bw()
+```
+
+#plot raw data intensity and distribution
+```{r}
+p1 <- ggplot(df_temp) +
+  geom_segment( aes(x=Sequence, xend=Sequence, y=log2(sample.a+1), yend=log2(control.a+1)), color="grey") +
+  geom_point( aes(x=Sequence, y=log2(sample.a+1)), color="red", alpha=0.5,size=3 ) +
+  geom_point( aes(x=Sequence, y=log2(control.a+1)), color="blue",alpha=0.5, size=3 ) +
+  ggtitle("Rep1")+
+  coord_flip()+
+  theme_bw()+
+  theme(axis.ticks.y=element_blank(),
+      axis.title = element_blank())
+
+p2 <- ggplot(df_temp) +
+  geom_segment( aes(x=Sequence, xend=Sequence, y=log2(sample.b+1), yend=log2(control.b+1)), color="grey") +
+  geom_point( aes(x=Sequence, y=log2(sample.b+1)), color="red", alpha=0.5,size=3 ) +
+  geom_point( aes(x=Sequence, y=log2(control.b+1)), color="blue", alpha=0.5,size=3 ) +
+  ggtitle("Rep2")+
+  coord_flip()+
+  theme_bw()+
+  theme(axis.text.y=element_blank(),
+      axis.ticks.y=element_blank(),
+      axis.title = element_blank())
+
+p3 <- ggplot(df_temp) +
+  geom_segment( aes(x=Sequence, xend=Sequence, y=log2(sample.c+1), yend=log2(control.c+1)), color="grey") +
+  geom_point( aes(x=Sequence, y=log2(sample.c+1)), color="red", alpha=0.5,size=3 ) +
+  geom_point( aes(x=Sequence, y=log2(control.c+1)), color="blue", alpha=0.5,size=3 ) +
+  ggtitle("Rep3")+
+  coord_flip()+
+  theme_bw()+
+  theme(axis.text.y=element_blank(),
+      axis.ticks.y=element_blank(),
+      axis.title = element_blank())
+
+p4 <- ggplot(df_temp) +
+  geom_segment( aes(x=Sequence, xend=Sequence, y=log2(sample.d+1), yend=log2(control.d+1)), color="grey") +
+  geom_point( aes(x=Sequence, y=log2(sample.d+1)), color="red",alpha=0.5, size=3 ) +
+  geom_point( aes(x=Sequence, y=log2(control.d+1)), color="blue", alpha=0.5,size=3 ) +
+  ggtitle("Rep4")+
+  coord_flip()+
+  theme_bw()+
+  theme(axis.text.y=element_blank(),
+      axis.ticks.y=element_blank(),
+      axis.title = element_blank())
+
+
+p <- p1|p2|p3|p4
+p + plot_annotation(title = paste0(acc,"    red:HA-tagged, blue: Untagged"))
+
+
+```
+
+
+
+```{r}
+set.seed(84735)
+
+a<- df_temp[df_temp[,"a"]!="NaN","a"]
+b<- df_temp[df_temp[,"b"]!="NaN","b"]
+c<- df_temp[df_temp[,"c"]!="NaN","c"]
+d<- df_temp[df_temp[,"d"]!="NaN","d"]
+
+
+p1 <- ggplot()+
+  geom_density(data=df_temp,aes(x=a,y = ..density..),fill="red",alpha=0.5)+
+  geom_histogram(data=df_temp,aes(x=a),fill="grey",color="grey30",bins=20)+
+  xlim(-0.1,1.1)+
+  ggtitle("rep1")+
+  theme_bw()
+p2 <- ggplot()+
+  geom_density(data=df_temp,aes(x=b,y = ..density..),fill="red",alpha=0.5)+
+  geom_histogram(data=df_temp,aes(x=b),fill="grey",color="grey30",bins=20)+
+  xlim(-0.1,1.1)+
+  ggtitle("rep2")+
+  theme_bw()
+p3 <- ggplot()+
+  geom_density(data=df_temp,aes(x=c,y = ..density..),fill="red",alpha=0.5)+
+  geom_histogram(data=df_temp,aes(x=c),fill="grey",color="grey30",bins=20)+
+  xlim(-0.1,1.1)+
+  ggtitle("rep3")+
+  theme_bw()
+p4 <- ggplot()+
+  geom_density(data=df_temp,aes(x=d,y = ..density..),fill="red",alpha=0.5)+
+  geom_histogram(data=df_temp,aes(x=d),fill="grey",color="grey30",bins=20)+
+  xlim(-0.1,1.1)+
+  ggtitle("rep4")+
+  theme_bw()
+
+p <- p1|p2|p3|p4
+p
+
+```
+
+```{r}
+library(bayesrules)
+n_trials <- nrow(a)
+successes <- round(sum(a),2)
+plot_beta_binomial(alpha = 2, beta = 2, y = successes, n = n_trials) +ggtitle("rep1")
+
+n_trials <- nrow(b)
+successes <- round(sum(b),2)
+plot_beta_binomial(alpha = 2, beta = 2, y = successes, n = n_trials) +ggtitle("rep2")
+
+n_trials <- nrow(c)
+successes <- round(sum(c),2)
+plot_beta_binomial(alpha = 2, beta = 2, y = successes, n = n_trials) +ggtitle("rep3")
+
+n_trials <- nrow(d)
+successes <- round(sum(d),2)
+plot_beta_binomial(alpha = 2, beta = 2, y = successes, n = n_trials) +ggtitle("rep4")
+
+```
+
+
+
+```{r}
+set.seed(123)
+ratio <- data.frame(a=(1:10),b=(1:10),c=(1:10),d=(1:10))
+
+a<- df_temp[df_temp[,"a"]!="NaN","a"]
+b<- df_temp[df_temp[,"b"]!="NaN","b"]
+c<- df_temp[df_temp[,"c"]!="NaN","c"]
+d<- df_temp[df_temp[,"d"]!="NaN","d"]
+
+n_trials <- nrow(a)+nrow(b)+nrow(c)+nrow(d)
+successes <- round(sum(a[,1])+sum(b[,1])+sum(c[,1])+sum(d[,1]),2)
+
+post_ratio <- data.frame(pi = rbeta(2000, successes, n_trials-successes))
+
+colnames(a) <- "pi"
+colnames(b) <- "pi"
+colnames(c) <- "pi"
+colnames(d) <- "pi"
+prior_ratio <- rbind(a[,1],b[,1],c[,1],d[,1])
+
+ggplot()+
+  geom_density(data=post_ratio,aes(x=pi))+
+  geom_density(data=prior_ratio,aes(x=pi),color="red")+
+  xlim(0,1)+
+  theme_bw()
+mean(post_ratio$pi)
+median(post_ratio$pi)
+mean(prior_ratio$pi)
+median(prior_ratio$pi)
+```
+
+
+
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
